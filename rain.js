@@ -2,124 +2,136 @@
   const W = 240, H = 282;
   const canvas = document.getElementById('c');
   const ctx = canvas.getContext('2d');
-  canvas.width = W;
-  canvas.height = H;
 
-  // --- Character set: katakana + latin + digits for authenticity ---
+  // Render at full physical pixel density for crisp output
+  const DPR = window.devicePixelRatio || 1;
+  canvas.width  = W * DPR;
+  canvas.height = H * DPR;
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.scale(DPR, DPR);
+  ctx.imageSmoothingEnabled = false;
+
+  // Katakana + symbols — authentic matrix charset
   const CHARS =
     'ｦｧｨｩｪｫｬｭｮｯｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ' +
-    '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ@#$%&*<>?';
+    '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ@#$%&<>?';
 
-  // --- Themes: [head, body, fade bg alpha] ---
   const THEMES = [
-    { name: 'matrix',  head: '#ffffff', body: '#00ff41', bg: 'rgba(0,0,0,0.055)' },
-    { name: 'cyber',   head: '#ffffff', body: '#00eeff', bg: 'rgba(0,0,0,0.055)' },
-    { name: 'blood',   head: '#ffffff', body: '#ff2a2a', bg: 'rgba(0,0,0,0.055)' },
-    { name: 'gold',    head: '#ffffff', body: '#ffd700', bg: 'rgba(0,0,0,0.055)' },
-    { name: 'ghost',   head: '#ffffff', body: 'rgba(255,255,255,0.7)', bg: 'rgba(0,0,0,0.04)' },
+    { head: '#ffffff', body: '#00ff41', glow: '#00ff41', bg: 'rgba(0,0,0,0.06)'  },
+    { head: '#ffffff', body: '#00eeff', glow: '#00eeff', bg: 'rgba(0,0,0,0.06)'  },
+    { head: '#ffffff', body: '#ff2a2a', glow: '#ff2a2a', bg: 'rgba(0,0,0,0.06)'  },
+    { head: '#ffffff', body: '#ffd700', glow: '#ffd700', bg: 'rgba(0,0,0,0.06)'  },
+    { head: '#ffffff', body: '#cc88ff', glow: '#cc88ff', bg: 'rgba(0,0,0,0.05)'  },
   ];
 
-  const FONT_SIZE = 10;
-  const COLS = Math.floor(W / FONT_SIZE);    // 24 columns
-  const ROWS = Math.floor(H / FONT_SIZE);    // 28 rows
+  const FS   = 11;   // font size px
+  const COLS = Math.floor(W / FS);
+  const ROWS = Math.floor(H / FS);
 
   let themeIdx = 0;
-  let speed = 40;          // ms per frame (lower = faster)
-  const SPEED_MIN = 18;
-  const SPEED_MAX = 120;
-  const SPEED_STEP = 8;
+  let speed    = 38;
+  const SPEED_MIN  = 16;
+  const SPEED_MAX  = 110;
+  const SPEED_STEP = 10;
 
-  // Each column: y position (in rows), length, char mutation timer
+  function rndChar() { return CHARS[Math.random() * CHARS.length | 0]; }
+  function theme()   { return THEMES[themeIdx]; }
+
   const drops = Array.from({ length: COLS }, () => ({
-    y: -Math.floor(Math.random() * ROWS * 1.5),   // stagger start above screen
-    len: 8 + Math.floor(Math.random() * 16),       // trail length
-    speed: 0.6 + Math.random() * 0.8,              // per-column speed variance
-    chars: Array.from({ length: 32 }, () => rndChar()),
-    mutateAt: 0,
+    y:     -(Math.random() * ROWS * 2 | 0),
+    len:   10 + (Math.random() * 18 | 0),
+    spd:   0.55 + Math.random() * 0.9,
+    chars: Array.from({ length: 40 }, rndChar),
+    tick:  0,
   }));
 
-  function rndChar() {
-    return CHARS[Math.floor(Math.random() * CHARS.length)];
-  }
+  // Offscreen buffer — draw rain here, composite to main canvas
+  const buf = document.createElement('canvas');
+  buf.width  = W * DPR;
+  buf.height = H * DPR;
+  const bx = buf.getContext('2d');
+  bx.scale(DPR, DPR);
+  bx.imageSmoothingEnabled = false;
+  bx.fillStyle = '#000';
+  bx.fillRect(0, 0, W, H);
 
-  function theme() { return THEMES[themeIdx]; }
-
-  let lastFrame = 0;
-  let animId;
+  let lastTs = 0, animId;
 
   function draw(ts) {
     animId = requestAnimationFrame(draw);
-    if (ts - lastFrame < speed) return;
-    lastFrame = ts;
+    if (ts - lastTs < speed) return;
+    lastTs = ts;
 
     const t = theme();
 
-    // Semi-transparent black overlay — creates the fade trail
-    ctx.fillStyle = t.bg;
-    ctx.fillRect(0, 0, W, H);
+    // Fade trail on buffer
+    bx.fillStyle = t.bg;
+    bx.fillRect(0, 0, W, H);
 
-    ctx.font = `bold ${FONT_SIZE}px monospace`;
-    ctx.textAlign = 'left';
+    bx.font = `bold ${FS}px "Share Tech Mono", "Courier New", monospace`;
+    bx.textAlign = 'left';
+    bx.textBaseline = 'top';
 
-    drops.forEach((col, i) => {
-      const x = i * FONT_SIZE;
-
-      // Mutate chars randomly for the shimmer effect
-      col.mutateAt++;
-      if (col.mutateAt > 2) {
-        const slot = Math.floor(Math.random() * col.chars.length);
-        col.chars[slot] = rndChar();
-        col.mutateAt = 0;
+    drops.forEach(col => {
+      // Mutate chars for shimmer
+      if (++col.tick > 1) {
+        col.chars[Math.random() * col.chars.length | 0] = rndChar();
+        col.tick = 0;
       }
 
-      // Draw visible trail rows
-      const headY = Math.floor(col.y);
+      const headRow = col.y | 0;
+
       for (let r = 0; r < col.len; r++) {
-        const ry = headY - r;
-        if (ry < 0 || ry >= ROWS) continue;
+        const row = headRow - r;
+        if (row < 0 || row >= ROWS) continue;
 
-        const charIdx = r % col.chars.length;
-        const ch = col.chars[charIdx];
+        const ch = col.chars[r % col.chars.length];
+        const px = (drops.indexOf(col)) * FS;
+        const py = row * FS;
+        const fade = 1 - r / col.len;
 
+        bx.save();
         if (r === 0) {
-          // Head character — bright white
-          ctx.fillStyle = t.head;
-          ctx.shadowColor = t.head;
-          ctx.shadowBlur = 6;
+          // Bright white head with sharp glow
+          bx.shadowColor = t.glow;
+          bx.shadowBlur  = 8 * DPR;
+          bx.fillStyle   = t.head;
+          bx.globalAlpha = 1;
+        } else if (r < 3) {
+          // Near-head — hot color, strong glow
+          bx.shadowColor = t.glow;
+          bx.shadowBlur  = 5 * DPR;
+          bx.fillStyle   = t.body;
+          bx.globalAlpha = fade * 0.95 + 0.05;
         } else {
-          // Body — fade from bright to dim by position in trail
-          const fade = 1 - (r / col.len);
-          ctx.fillStyle = t.body;
-          ctx.globalAlpha = Math.max(0.08, fade * fade);
-          ctx.shadowColor = t.body;
-          ctx.shadowBlur = r < 3 ? 4 : 0;
+          // Tail — dim, no glow
+          bx.shadowBlur  = 0;
+          bx.fillStyle   = t.body;
+          bx.globalAlpha = Math.max(0.04, fade * fade * 0.8);
         }
-
-        ctx.fillText(ch, x + 1, (ry + 1) * FONT_SIZE);
-        ctx.globalAlpha = 1;
-        ctx.shadowBlur = 0;
+        bx.fillText(ch, px, py);
+        bx.restore();
       }
 
-      // Advance column
-      col.y += col.speed;
-
-      // Reset when fully off screen bottom
-      if ((col.y - col.len) * FONT_SIZE > H) {
-        col.y = -Math.floor(Math.random() * ROWS * 0.8);
-        col.len = 8 + Math.floor(Math.random() * 16);
-        col.speed = 0.6 + Math.random() * 0.8;
+      col.y += col.spd;
+      if ((col.y - col.len) * FS > H) {
+        col.y   = -(Math.random() * ROWS * 0.9 | 0);
+        col.len = 10 + (Math.random() * 18 | 0);
+        col.spd = 0.55 + Math.random() * 0.9;
       }
     });
+
+    // Composite buffer to display canvas
+    ctx.clearRect(0, 0, W, H);
+    ctx.drawImage(buf, 0, 0, W, H);
   }
 
   animId = requestAnimationFrame(draw);
 
-  // --- HUD (theme dots) ---
-  const hud = document.getElementById('hud');
-  const dots = Array.from({ length: THEMES.length }, (_, i) => {
-    const d = document.getElementById('d' + i);
-    return d;
-  });
+  // --- HUD dots ---
+  const hud  = document.getElementById('hud');
+  const dots = THEMES.map((_, i) => document.getElementById('d' + i));
   let hudTimer;
 
   function showHUD() {
@@ -130,31 +142,19 @@
     });
     hud.classList.add('visible');
     clearTimeout(hudTimer);
-    hudTimer = setTimeout(() => hud.classList.remove('visible'), 1800);
+    hudTimer = setTimeout(() => hud.classList.remove('visible'), 2000);
   }
 
-  function cycleTheme() {
-    themeIdx = (themeIdx + 1) % THEMES.length;
-    showHUD();
-  }
+  function cycleTheme()    { themeIdx = (themeIdx + 1) % THEMES.length; showHUD(); }
+  function increaseSpeed() { speed = Math.max(SPEED_MIN, speed - SPEED_STEP); }
+  function decreaseSpeed() { speed = Math.min(SPEED_MAX, speed + SPEED_STEP); }
 
-  function increaseSpeed() {
-    speed = Math.max(SPEED_MIN, speed - SPEED_STEP);
-  }
-
-  function decreaseSpeed() {
-    speed = Math.min(SPEED_MAX, speed + SPEED_STEP);
-  }
-
-  // --- R1 Hardware ---
-  const isR1 = typeof PluginMessageHandler !== 'undefined';
-
-  if (isR1) {
-    document.addEventListener('scrollUp',    increaseSpeed);
-    document.addEventListener('scrollDown',  decreaseSpeed);
-    document.addEventListener('sideClick',   cycleTheme);
+  // R1 hardware events
+  if (typeof PluginMessageHandler !== 'undefined') {
+    document.addEventListener('scrollUp',   increaseSpeed);
+    document.addEventListener('scrollDown', decreaseSpeed);
+    document.addEventListener('sideClick',  cycleTheme);
   } else {
-    // Browser fallback for testing
     document.addEventListener('keydown', e => {
       if (e.key === 'ArrowUp')   increaseSpeed();
       if (e.key === 'ArrowDown') decreaseSpeed();
