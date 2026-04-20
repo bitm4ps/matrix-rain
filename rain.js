@@ -3,7 +3,6 @@
   const canvas = document.getElementById('c');
   const ctx = canvas.getContext('2d');
 
-  // Render at full physical pixel density for crisp output
   const DPR = window.devicePixelRatio || 1;
   canvas.width  = W * DPR;
   canvas.height = H * DPR;
@@ -12,132 +11,146 @@
   ctx.scale(DPR, DPR);
   ctx.imageSmoothingEnabled = false;
 
-  // Katakana + symbols — authentic matrix charset
   const CHARS =
     'ｦｧｨｩｪｫｬｭｮｯｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ' +
     '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ@#$%&<>?';
 
+  // Each theme: [r,g,b] of the body color
   const THEMES = [
-    { head: '#ffffff', body: '#00ff41', glow: '#00ff41', bg: 'rgba(0,0,0,0.06)'  },
-    { head: '#ffffff', body: '#00eeff', glow: '#00eeff', bg: 'rgba(0,0,0,0.06)'  },
-    { head: '#ffffff', body: '#ff2a2a', glow: '#ff2a2a', bg: 'rgba(0,0,0,0.06)'  },
-    { head: '#ffffff', body: '#ffd700', glow: '#ffd700', bg: 'rgba(0,0,0,0.06)'  },
-    { head: '#ffffff', body: '#cc88ff', glow: '#cc88ff', bg: 'rgba(0,0,0,0.05)'  },
+    [0,   255, 65],   // matrix green
+    [0,   238, 255],  // cyber cyan
+    [255, 42,  42],   // blood red
+    [255, 215, 0],    // gold
+    [200, 120, 255],  // purple
   ];
 
-  const FS   = 11;   // font size px
-  const COLS = Math.floor(W / FS);
-  const ROWS = Math.floor(H / FS);
+  const FS   = 12;
+  const COLS = Math.floor(W / FS);   // 20
+  const ROWS = Math.floor(H / FS);   // 23
 
   let themeIdx = 0;
-  let speed    = 38;
+  let speed    = 42;
   const SPEED_MIN  = 16;
-  const SPEED_MAX  = 110;
-  const SPEED_STEP = 10;
+  const SPEED_MAX  = 120;
+  const SPEED_STEP = 12;
 
   function rndChar() { return CHARS[Math.random() * CHARS.length | 0]; }
-  function theme()   { return THEMES[themeIdx]; }
 
-  const drops = Array.from({ length: COLS }, () => ({
-    y:     -(Math.random() * ROWS * 2 | 0),
-    len:   10 + (Math.random() * 18 | 0),
-    spd:   0.55 + Math.random() * 0.9,
-    chars: Array.from({ length: 40 }, rndChar),
-    tick:  0,
+  // Per-cell grid: intensity 0..1 and current character
+  const grid = Array.from({ length: COLS }, () =>
+    Array.from({ length: ROWS }, () => ({ v: 0, ch: rndChar() }))
+  );
+
+  // Active streams
+  const streams = Array.from({ length: COLS }, (_, c) => ({
+    col: c,
+    row: -(Math.random() * ROWS | 0),
+    len: 10 + (Math.random() * 12 | 0),
+    spd: 0.4 + Math.random() * 0.7,
+    pos: 0,   // fractional row position
   }));
 
-  // Offscreen buffer — draw rain here, composite to main canvas
-  const buf = document.createElement('canvas');
-  buf.width  = W * DPR;
-  buf.height = H * DPR;
-  const bx = buf.getContext('2d');
-  bx.scale(DPR, DPR);
-  bx.imageSmoothingEnabled = false;
-  bx.fillStyle = '#000';
-  bx.fillRect(0, 0, W, H);
+  const DECAY = 0.82;  // how fast trail fades per frame
 
-  let lastTs = 0, animId;
+  let lastTs = 0;
 
-  function draw(ts) {
-    animId = requestAnimationFrame(draw);
-    if (ts - lastTs < speed) return;
-    lastTs = ts;
+  function step() {
+    // Decay all cells
+    for (let c = 0; c < COLS; c++)
+      for (let r = 0; r < ROWS; r++)
+        grid[c][r].v *= DECAY;
 
-    const t = theme();
+    // Advance streams and stamp intensity
+    streams.forEach(s => {
+      s.pos += s.spd;
+      const head = s.row + (s.pos | 0);
 
-    // Fade trail on buffer
-    bx.fillStyle = t.bg;
-    bx.fillRect(0, 0, W, H);
-
-    bx.font = `bold ${FS}px "Share Tech Mono", "Courier New", monospace`;
-    bx.textAlign = 'left';
-    bx.textBaseline = 'top';
-
-    drops.forEach(col => {
-      // Mutate chars for shimmer
-      if (++col.tick > 1) {
-        col.chars[Math.random() * col.chars.length | 0] = rndChar();
-        col.tick = 0;
-      }
-
-      const headRow = col.y | 0;
-
-      for (let r = 0; r < col.len; r++) {
-        const row = headRow - r;
+      for (let i = 0; i <= s.len; i++) {
+        const row = head - i;
         if (row < 0 || row >= ROWS) continue;
-
-        const ch = col.chars[r % col.chars.length];
-        const px = (drops.indexOf(col)) * FS;
-        const py = row * FS;
-        const fade = 1 - r / col.len;
-
-        bx.save();
-        if (r === 0) {
-          // Bright white head with sharp glow
-          bx.shadowColor = t.glow;
-          bx.shadowBlur  = 8 * DPR;
-          bx.fillStyle   = t.head;
-          bx.globalAlpha = 1;
-        } else if (r < 3) {
-          // Near-head — hot color, strong glow
-          bx.shadowColor = t.glow;
-          bx.shadowBlur  = 5 * DPR;
-          bx.fillStyle   = t.body;
-          bx.globalAlpha = fade * 0.95 + 0.05;
-        } else {
-          // Tail — dim, no glow
-          bx.shadowBlur  = 0;
-          bx.fillStyle   = t.body;
-          bx.globalAlpha = Math.max(0.04, fade * fade * 0.8);
+        const intensity = i === 0 ? 1 : Math.pow(1 - i / s.len, 1.6);
+        const cell = grid[s.col][row];
+        if (intensity > cell.v) {
+          cell.v  = intensity;
+          // Randomly mutate char as stream passes
+          if (Math.random() < 0.25) cell.ch = rndChar();
         }
-        bx.fillText(ch, px, py);
-        bx.restore();
       }
 
-      col.y += col.spd;
-      if ((col.y - col.len) * FS > H) {
-        col.y   = -(Math.random() * ROWS * 0.9 | 0);
-        col.len = 10 + (Math.random() * 18 | 0);
-        col.spd = 0.55 + Math.random() * 0.9;
+      // Reset when stream exits bottom
+      if ((head - s.len) >= ROWS) {
+        s.row = -2 - (Math.random() * ROWS * 0.6 | 0);
+        s.pos = 0;
+        s.len = 10 + (Math.random() * 12 | 0);
+        s.spd = 0.4 + Math.random() * 0.7;
       }
     });
-
-    // Composite buffer to display canvas
-    ctx.clearRect(0, 0, W, H);
-    ctx.drawImage(buf, 0, 0, W, H);
   }
 
-  animId = requestAnimationFrame(draw);
+  function render() {
+    const [tr, tg, tb] = THEMES[themeIdx];
 
-  // --- HUD dots ---
+    // Clear to pure black
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.font      = `bold ${FS}px "Share Tech Mono", monospace`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+
+    for (let c = 0; c < COLS; c++) {
+      for (let r = 0; r < ROWS; r++) {
+        const { v, ch } = grid[c][r];
+        if (v < 0.03) continue;
+
+        const x = c * FS;
+        const y = r * FS;
+
+        if (v > 0.95) {
+          // Head — pure white with strong glow
+          ctx.shadowColor = `rgb(${tr},${tg},${tb})`;
+          ctx.shadowBlur  = 10;
+          ctx.fillStyle   = '#ffffff';
+        } else if (v > 0.7) {
+          // Near head — bright body color
+          ctx.shadowColor = `rgb(${tr},${tg},${tb})`;
+          ctx.shadowBlur  = 6;
+          const bright = Math.round(100 + v * 155);
+          ctx.fillStyle = `rgb(${Math.min(255,tr+bright|0)},${Math.min(255,tg+bright|0)},${Math.min(255,tb+bright|0)})`;
+        } else {
+          // Tail — scaled body color, no glow
+          ctx.shadowBlur = 0;
+          const s = v * v;
+          ctx.fillStyle = `rgb(${tr*s|0},${tg*s|0},${tb*s|0})`;
+        }
+
+        ctx.fillText(ch, x, y);
+      }
+    }
+    ctx.shadowBlur = 0;
+  }
+
+  function loop(ts) {
+    requestAnimationFrame(loop);
+    if (ts - lastTs < speed) return;
+    lastTs = ts;
+    step();
+    render();
+  }
+
+  requestAnimationFrame(loop);
+
+  // --- HUD ---
   const hud  = document.getElementById('hud');
   const dots = THEMES.map((_, i) => document.getElementById('d' + i));
   let hudTimer;
 
   function showHUD() {
+    const [tr, tg, tb] = THEMES[themeIdx];
     dots.forEach((d, i) => {
       if (!d) return;
-      d.style.color = THEMES[i].body;
+      const [r, g, b] = THEMES[i];
+      d.style.color = `rgb(${r},${g},${b})`;
       d.classList.toggle('active', i === themeIdx);
     });
     hud.classList.add('visible');
@@ -149,7 +162,6 @@
   function increaseSpeed() { speed = Math.max(SPEED_MIN, speed - SPEED_STEP); }
   function decreaseSpeed() { speed = Math.min(SPEED_MAX, speed + SPEED_STEP); }
 
-  // R1 hardware events
   if (typeof PluginMessageHandler !== 'undefined') {
     document.addEventListener('scrollUp',   increaseSpeed);
     document.addEventListener('scrollDown', decreaseSpeed);
